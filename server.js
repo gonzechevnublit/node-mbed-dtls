@@ -31,7 +31,7 @@ class DtlsServer extends EventEmitter {
     }, options);
 
     this.sockets = {};
-    this.dgramSocket = dgram.createSocket('udp6');
+    this.dgramSocket = dgram.createSocket(options.type);
     this._onMessage = this._onMessage.bind(this);
     this.listening = false;
 
