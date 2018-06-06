@@ -1,4 +1,4 @@
 #!/bin/bash
-rm mbedtls -rf
+rm -rf mbedtls
 git clone https://github.com/ARMmbed/mbedtls.git mbedtls
 

@@ -91,6 +91,7 @@
         "mbedtls/library/platform_util.c",
         "mbedtls/library/ripemd160.c",
         "mbedtls/library/rsa.c",
+        "mbedtls/library/rsa_internal.c",
         "mbedtls/library/sha1.c",
         "mbedtls/library/sha256.c",
         "mbedtls/library/sha512.c",
