@@ -69,36 +69,54 @@ void DtlsServer::Initialize(Nan::ADDON_REGISTER_FUNCTION_ARGS_TYPE target) {
 }
 
 void DtlsServer::New(const Nan::FunctionCallbackInfo<v8::Value>& info) {
-  if (info.Length() < 2) {
-    return Nan::ThrowTypeError("Expecting at least two parameters");
+  if (info.Length() < 4) {
+    return Nan::ThrowTypeError("Expecting at least 4 parameters");
   }
 
-  if (!Buffer::HasInstance(info[0])) {
+  size_t key_len = info[0]->IsNull() ? 0 : Buffer::Length(info[0]);
+  size_t crt_len = info[1]->IsNull() ? 0 : Buffer::Length(info[1]);
+  bool psk_callback_is_null = info[2]->IsNull();
+
+  // needs to be a Buffer or false
+  if ( key_len && !Buffer::HasInstance(info[0])) {
     return Nan::ThrowTypeError("Expecting key to be a buffer");
   }
 
-  if (info[1]->IsFunction() == false) {
-   return Nan::ThrowTypeError("Expecting param 2 to be a function"); 
+  // needs to be a Buffer or false
+  if ( crt_len && !Buffer::HasInstance(info[1]) ) {
+    return Nan::ThrowTypeError("Expecting crt to be a buffer");
   }
 
-  size_t key_len = Buffer::Length(info[0]);
+  if ( !psk_callback_is_null && info[2]->IsFunction() == false) {
+   return Nan::ThrowTypeError("Expecting param 2 to be a function (or null)"); 
+  }
 
-  const unsigned char *key = (const unsigned char *)Buffer::Data(info[0]);
+  const unsigned char *key = nullptr;
+  if( key_len )
+    key = (const unsigned char *)Buffer::Data(info[0]);
 
-  Nan::Callback* get_psk  = new Nan::Callback(info[1].As<v8::Function>());
+  const unsigned char *crt = nullptr;
+  if( crt_len )
+    crt = (const unsigned char *)Buffer::Data(info[1]);
+
+  Nan::Callback* get_psk = nullptr;
+  if( !psk_callback_is_null )
+    get_psk = new Nan::Callback(info[2].As<v8::Function>());
 
   int debug_level = 0;
-  if (info.Length() > 1) {
-    debug_level = info[2]->Uint32Value();
+  if (info.Length() > 3) {
+    debug_level = info[3]->Uint32Value();
   }
 
-  DtlsServer *server = new DtlsServer(key, key_len,get_psk, debug_level);
+  DtlsServer *server = new DtlsServer(key, key_len, crt, crt_len, get_psk, debug_level);
   server->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
 
 DtlsServer::DtlsServer(const unsigned char *srv_key,
                        size_t srv_key_len,
+                       const unsigned char *srv_crt,
+                       size_t srv_crt_len,
                        Nan::Callback* get_psk_cb,
                        int debug_level)
     : Nan::ObjectWrap() {
@@ -112,23 +130,60 @@ DtlsServer::DtlsServer(const unsigned char *srv_key,
 #if defined(MBEDTLS_SSL_CACHE_C)
   mbedtls_ssl_cache_init(&cache);
 #endif
-  mbedtls_x509_crt_init(&srvcert);
-  mbedtls_pk_init(&pkey);
+  mbedtls_x509_crt_init( &srvcert );
+  mbedtls_pk_init( &pkey );
 
-  mbedtls_ssl_conf_psk_cb(&conf, fetchPSKGivenID, this);
-  mbedtls_entropy_init(&entropy);
-  mbedtls_ctr_drbg_init(&ctr_drbg);
+  mbedtls_x509_crt_init( &ca_chain) ;
+  mbedtls_x509_crl_init( &ca_crl );
+  
+  mbedtls_entropy_init( &entropy );
+  mbedtls_ctr_drbg_init( &ctr_drbg );
 
 #if defined(MBEDTLS_DEBUG_C)
   mbedtls_debug_set_threshold(debug_level);
 #endif
 
-  ret = mbedtls_pk_parse_key(&pkey,
-               (const unsigned char *)srv_key,
-               srv_key_len,
-               NULL,
-               0);
-  if (ret != 0) goto exit;
+  // PSK: register psk callback if present
+  if( get_psk != nullptr )
+    mbedtls_ssl_conf_psk_cb( &conf, fetchPSKGivenID, this );
+
+  // crt is optional
+  if( srv_crt && srv_crt_len )
+  {
+    ret = mbedtls_x509_crt_parse(&srvcert,
+                (const unsigned char *)srv_crt,
+                srv_crt_len);
+    if (ret != 0) goto exit;
+  }
+
+  // key is optional when using PSK only
+  if( srv_key && srv_key_len )
+  {
+    ret = mbedtls_pk_parse_key(&pkey,
+                (const unsigned char *)srv_key,
+                srv_key_len,
+                NULL,
+                0);
+    if (ret != 0) goto exit;
+
+    if( debug_level > 1 )
+    {
+      printf( "private key loaded: %s-%zu type: %i\n", mbedtls_pk_get_name(&pkey), mbedtls_pk_get_bitlen(&pkey), mbedtls_pk_get_type(&pkey) );
+    }
+
+    // Since this library is exclusively for datagram (UDP) connections
+    // if using a key, it must meet the CoAP Specification
+    // https://tools.ietf.org/html/rfc7252#section-9.1.3.3
+    // required is an Elliptic Curve key with 256 bits 'secp256r1' (aka 'prime256v1' in OpenSSL)
+    // TODO: - either pass validating the key into a separate function that can be called from node OR
+    //       - make an enum with operating modes that gets passed in and we can evaluate here
+    if( mbedtls_pk_get_type(&pkey) != MBEDTLS_PK_ECKEY &&
+        mbedtls_pk_get_bitlen(&pkey) != 256 )
+    {
+      Nan::ThrowError( "private key must be Elliptic-Curve type for DTLS and CoAP (see https://tools.ietf.org/html/rfc7252#section-9.1.3.3)" );
+      return;
+    }
+  }
 
   // TODO re-use node entropy and randomness
   ret = mbedtls_ctr_drbg_seed(&ctr_drbg,
@@ -152,6 +207,8 @@ DtlsServer::DtlsServer(const unsigned char *srv_key,
 
   ret = mbedtls_ssl_conf_own_cert(&conf, &srvcert, &pkey);
   if (ret != 0) goto exit;
+
+  mbedtls_ssl_conf_ca_chain(&conf, &ca_chain, &ca_crl);
 
   ret = mbedtls_ssl_cookie_setup(&cookie_ctx,
                                  mbedtls_ctr_drbg_random,
@@ -180,17 +237,21 @@ NAN_SETTER(DtlsServer::SetHandshakeTimeoutMin) {
 char *DtlsServer::getPskFromIdentity(char *identity) {
   char *psk = NULL;
 
-  v8::Local<v8::Value> argv[] = {
-    Nan::New(identity).ToLocalChecked()
-  };
-  v8::Local<v8::Function> getPskCallback = get_psk->GetFunction();
-  v8::Local<v8::Value> jsPsk = getPskCallback->Call(Nan::GetCurrentContext()->Global(), 1, argv);
+  if( get_psk != nullptr  )
+  {
 
-  Nan::Utf8String jsUtf8Psk(jsPsk->ToString());
-  int pskLen = jsUtf8Psk.length();
-  if (pskLen > 0) {
-    psk = (char *)malloc(sizeof(char)*(pskLen+1));
-    strcpy(psk,*jsUtf8Psk);
+    v8::Local<v8::Value> argv[] = {
+      Nan::New(identity).ToLocalChecked()
+    };
+    v8::Local<v8::Function> getPskCallback = get_psk->GetFunction();
+    v8::Local<v8::Value> jsPsk = getPskCallback->Call(Nan::GetCurrentContext()->Global(), 1, argv);
+
+    Nan::Utf8String jsUtf8Psk(jsPsk->ToString());
+    int pskLen = jsUtf8Psk.length();
+    if (pskLen > 0) {
+      psk = (char *)malloc(sizeof(char)*(pskLen+1));
+      strcpy(psk,*jsUtf8Psk);
+    }
   }
 
   return psk;
@@ -205,6 +266,8 @@ void DtlsServer::throwError(int ret) {
 DtlsServer::~DtlsServer() {
   mbedtls_x509_crt_free( &srvcert );
   mbedtls_pk_free( &pkey );
+  mbedtls_x509_crt_free( &ca_chain );
+  mbedtls_x509_crl_free( &ca_crl );
   mbedtls_ssl_config_free( &conf );
   mbedtls_ssl_cookie_free( &cookie_ctx );
 #if defined(MBEDTLS_SSL_CACHE_C)

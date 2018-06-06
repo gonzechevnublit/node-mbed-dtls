@@ -27,6 +27,8 @@ public:
   static NAN_SETTER(SetHandshakeTimeoutMin);
   DtlsServer(const unsigned char *srv_key,
              size_t srv_key_len,
+             const unsigned char *crt_key,
+             size_t srv_crt_len,
              Nan::Callback* get_psk_cb,
              int debug_level = 0);
   inline mbedtls_ssl_config* config() { return &conf; }
@@ -41,6 +43,8 @@ private:
   mbedtls_ctr_drbg_context ctr_drbg;
   mbedtls_ssl_config conf;
   mbedtls_x509_crt srvcert;
+  mbedtls_x509_crt ca_chain;
+  mbedtls_x509_crl ca_crl; 
   mbedtls_pk_context pkey;
 #if defined(MBEDTLS_SSL_CACHE_C)
   mbedtls_ssl_cache_context cache;

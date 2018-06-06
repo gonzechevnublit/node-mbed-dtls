@@ -18,12 +18,12 @@ class DtlsServer extends EventEmitter {
       throw "Parameter options is not set";
     }
 
-    if (options.key == undefined) {
-      throw "Parameter 'key' is not set";
+    if (options.key == undefined && options.identityPskCallback == undefined) {
+      throw "You need to define either a 'key' or an 'identityPskCalback' for PSK mode";
     }
 
-    if (options.identityPskCallback == undefined) {
-      throw "Parameter 'identityPskCallback' is not set";
+    if(options.type == undefined) {
+      options.type = 'udp4';
     }
 
     this.options = Object.assign({
@@ -48,14 +48,29 @@ class DtlsServer extends EventEmitter {
       this._socketClosed();
     });
 
-    let key = Buffer.isBuffer(options.key) ? options.key : fs.readFileSync(options.key);
-    // likely a PEM encoded key, add null terminating byte
-    // 0x2d = '-'
-    if (key[0] === 0x2d && key[key.length - 1] !== 0) {
-      key = Buffer.concat([key, new Buffer([0])]);
+    let key = null;
+    if( options.key )
+    {
+      key = Buffer.isBuffer(options.key) ? options.key : fs.readFileSync(options.key);
+      // likely a PEM encoded key, add null terminating byte
+      // 0x2d = '-'
+      if (key[0] === 0x2d && key[key.length - 1] !== 0) {
+        key = Buffer.concat([key, new Buffer([0])]);
+      }
     }
 
-    this.mbedServer = new mbed.DtlsServer(key, options.identityPskCallback, options.debug);
+    let cert = null;
+    if( options.cert )
+    {
+      cert = Buffer.isBuffer(options.cert) ? options.cert : fs.readFileSync(options.cert);
+      // likely a PEM encoded cert, add null terminating byte
+      // 0x2d = '-'
+      if (cert[0] === 0x2d && cert[cert.length - 1] !== 0) {
+        cert = Buffer.concat([cert, new Buffer([0])]);
+      }
+    }
+
+    this.mbedServer = new mbed.DtlsServer(key, cert, options.identityPskCallback, options.debug);
     if (options.handshakeTimeoutMin) {
       this.mbedServer.handshakeTimeoutMin = options.handshakeTimeoutMin;
     }
