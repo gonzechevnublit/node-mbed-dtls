@@ -1,10 +1,15 @@
 ## node-mbed-dtls
-================
 
-node DTLS (server and client) wrapping [mbedtls](https://github.com/ARMmbed/mbedtls).
+node.js DTLS-module (server and client) wrapping [mbedtls](https://github.com/ARMmbed/mbedtls).
+
+Join the discussion on this module on gitter: [![Gitter](https://badges.gitter.im/krekeltronics/node-mbed-dtls.svg)](https://gitter.im/krekeltronics/node-mbed-dtls?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
+
+We at Krekeltronics are hoping to revive this module as a means to bridge the glaring gap that node-core currently has by not supporting DTLS. We would appreciate any input you may have. Feel free to comment on the roadmap and the tickets, help us test the code or submit pull requests.
+
+--------------
 
 #### Lineage
-This package was forked from [Spark's original server implementation](https://github.com/spark/node-mbed-dtls) and merged with [their client implementation](https://github.com/spark/node-mbed-dtls-client).
+This package was forked by from [Spark's original server implementation](https://github.com/spark/node-mbed-dtls) and merged with [their client implementation](https://github.com/spark/node-mbed-dtls-client).
 
 #### Changes made to the fork:
 The wrapped library is now pulled directly from ARMmbed's repo, rather than Spark's. The ciphersuites and API have been extended to allow PSK and CA certificates to be loaded at runtime, and on a per-instance basis.
