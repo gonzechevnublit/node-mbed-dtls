@@ -29,6 +29,9 @@ public:
              size_t srv_key_len,
              const unsigned char *crt_key,
              size_t srv_crt_len,
+             const unsigned char *ca_crt,
+             size_t ca_crt_len,
+             int ca_verify_mode,
              Nan::Callback* get_psk_cb,
              int debug_level = 0);
   inline mbedtls_ssl_config* config() { return &conf; }

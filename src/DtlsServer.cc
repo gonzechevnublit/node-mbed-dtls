@@ -76,6 +76,8 @@ void DtlsServer::New(const Nan::FunctionCallbackInfo<v8::Value>& info) {
   size_t key_len = info[0]->IsNull() ? 0 : Buffer::Length(info[0]);
   size_t crt_len = info[1]->IsNull() ? 0 : Buffer::Length(info[1]);
   bool psk_callback_is_null = info[2]->IsNull();
+  size_t ca_crt_len = info[3]->IsNull() ? 0 : Buffer::Length(info[3]);
+  int ca_verify_mode = info[4]->IsNull() ? MBEDTLS_SSL_VERIFY_OPTIONAL : info[4]->IntegerValue();
 
   // needs to be a Buffer or false
   if ( key_len && !Buffer::HasInstance(info[0])) {
@@ -91,6 +93,21 @@ void DtlsServer::New(const Nan::FunctionCallbackInfo<v8::Value>& info) {
    return Nan::ThrowTypeError("Expecting param 2 to be a function (or null)"); 
   }
 
+  // needs to be a Buffer or false
+  if ( ca_crt_len && !Buffer::HasInstance(info[3]) ) {
+    return Nan::ThrowTypeError("Expecting ca_crt to be a buffer");
+  }
+
+  printf("Verify mode: %i", ca_verify_mode);
+
+  if ( ca_verify_mode < 0 || ca_verify_mode > 2 )
+  {
+    if( crt_len > 0 )
+      ca_verify_mode = MBEDTLS_SSL_VERIFY_OPTIONAL;
+    else
+      ca_verify_mode = MBEDTLS_SSL_VERIFY_NONE;
+  }
+
   const unsigned char *key = nullptr;
   if( key_len )
     key = (const unsigned char *)Buffer::Data(info[0]);
@@ -103,12 +120,21 @@ void DtlsServer::New(const Nan::FunctionCallbackInfo<v8::Value>& info) {
   if( !psk_callback_is_null )
     get_psk = new Nan::Callback(info[2].As<v8::Function>());
 
+  const unsigned char *ca_crt = nullptr;
+  if( ca_crt_len )
+    ca_crt = (const unsigned char *)Buffer::Data(info[3]);
+
   int debug_level = 0;
-  if (info.Length() > 3) {
-    debug_level = info[3]->Uint32Value();
+  if (info.Length() > 5) {
+    debug_level = info[5]->Uint32Value();
   }
 
-  DtlsServer *server = new DtlsServer(key, key_len, crt, crt_len, get_psk, debug_level);
+  DtlsServer *server = new DtlsServer(key, key_len,
+                                      crt, crt_len,
+                                      ca_crt, ca_crt_len,
+                                      ca_verify_mode,
+                                      get_psk,
+                                      debug_level);
   server->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
@@ -117,6 +143,9 @@ DtlsServer::DtlsServer(const unsigned char *srv_key,
                        size_t srv_key_len,
                        const unsigned char *srv_crt,
                        size_t srv_crt_len,
+                       const unsigned char *ca_crt,
+                       size_t ca_crt_len,
+                       int ca_verify_mode,
                        Nan::Callback* get_psk_cb,
                        int debug_level)
     : Nan::ObjectWrap() {
@@ -185,6 +214,15 @@ DtlsServer::DtlsServer(const unsigned char *srv_key,
     }
   }
 
+  if( ca_crt && ca_crt_len )
+  {
+    ret = mbedtls_x509_crt_parse( &ca_chain, (const unsigned char *) ca_crt, ca_crt_len );
+    if (ret != 0) goto exit;
+  }
+
+  mbedtls_ssl_conf_authmode( &conf, ca_verify_mode );
+  mbedtls_ssl_conf_ca_chain( &conf, &ca_chain, NULL );
+
   // TODO re-use node entropy and randomness
   ret = mbedtls_ctr_drbg_seed(&ctr_drbg,
                   mbedtls_entropy_func,
@@ -208,7 +246,7 @@ DtlsServer::DtlsServer(const unsigned char *srv_key,
   ret = mbedtls_ssl_conf_own_cert(&conf, &srvcert, &pkey);
   if (ret != 0) goto exit;
 
-  mbedtls_ssl_conf_ca_chain(&conf, &ca_chain, &ca_crl);
+  
 
   ret = mbedtls_ssl_cookie_setup(&cookie_ctx,
                                  mbedtls_ctr_drbg_random,
@@ -219,9 +257,6 @@ DtlsServer::DtlsServer(const unsigned char *srv_key,
                                 mbedtls_ssl_cookie_write,
                                 mbedtls_ssl_cookie_check,
                                 &cookie_ctx);
-
-  // needed for server to send CertificateRequest
-  mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
 
   return;
 exit:
