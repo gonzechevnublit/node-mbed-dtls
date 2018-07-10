@@ -9,7 +9,8 @@ var dtls = require('../index');
 
 const opts = {
 	cert: path.join(__dirname, 'public.der'),
-	key: path.join(__dirname, 'private.der')
+	key: path.join(__dirname, 'private.der'),
+	identityPskCallback : null
 };
 
 describe('createServer', function() {

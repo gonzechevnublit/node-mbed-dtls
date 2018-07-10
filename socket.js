@@ -25,7 +25,14 @@ class DtlsSocket extends stream.Duplex {
       this._renegotiate.bind(this));
 
     this.send = function(msg, offset, length, port, host, callback) {
-      this.mbedSocket.send(msg);
+      if (this.mbedSocket) {
+        this.mbedSocket.send(msg);
+      } else {
+        if (callback)
+          callback(new Error('mbedSocket not exist'));
+        else 
+          this.emit('error', new Error('mbedSocket not exist'));
+      }
     }
   }
 
