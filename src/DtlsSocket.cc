@@ -6,6 +6,7 @@
 
 #include "mbedtls/ssl_internal.h"
 #include "mbedtls/pk.h"
+#include "mbedtls/sha256.h"
 
 using namespace node;
 
@@ -30,6 +31,8 @@ DtlsSocket::Initialize(Nan::ADDON_REGISTER_FUNCTION_ARGS_TYPE target) {
 
   Nan::SetAccessor(ctorInst, Nan::New("publicKey").ToLocalChecked(), GetPublicKey);
   Nan::SetAccessor(ctorInst, Nan::New("publicKeyPEM").ToLocalChecked(), GetPublicKeyPEM);
+  Nan::SetAccessor(ctorInst, Nan::New("publicKeyHash").ToLocalChecked(), GetPublicKeyHash);
+  Nan::SetAccessor(ctorInst, Nan::New("certificateHash").ToLocalChecked(), GetCertificateHash);
   Nan::SetAccessor(ctorInst, Nan::New("outCounter").ToLocalChecked(), GetOutCounter);
   Nan::SetAccessor(ctorInst, Nan::New("session").ToLocalChecked(), GetSession);
 
@@ -84,7 +87,8 @@ NAN_GETTER(DtlsSocket::GetPublicKey) {
   DtlsSocket *socket = Nan::ObjectWrap::Unwrap<DtlsSocket>(info.This());
 
   mbedtls_ssl_session *session = socket->ssl_context.session;
-  if (session == NULL) {
+  if (session == NULL ||
+      session->peer_cert == NULL) {
     return;
   }
   int ret;
@@ -120,6 +124,57 @@ NAN_GETTER(DtlsSocket::GetPublicKeyPEM) {
   }
 
   info.GetReturnValue().Set(Nan::CopyBuffer((char *)buf, strlen((const char *)buf)).ToLocalChecked());
+}
+
+NAN_GETTER(DtlsSocket::GetPublicKeyHash) {
+  DtlsSocket *socket = Nan::ObjectWrap::Unwrap<DtlsSocket>(info.This());
+
+  mbedtls_ssl_session *session = socket->ssl_context.session;
+  if (session == NULL ||
+      session->peer_cert == NULL) {
+    socket->isPublicKeyHashInitDone = false;
+    return;
+  }
+
+  if( socket->isPublicKeyHashInitDone == false )
+  {
+    int ret;
+    const size_t buf_len = 256;
+    unsigned char buf[buf_len];
+    mbedtls_pk_context pk = session->peer_cert->pk;
+    ret = mbedtls_pk_write_pubkey_der(&pk, buf, buf_len);
+    if (ret < 0) {
+      // TODO error?
+      return;
+    }
+
+    unsigned char hash[ret];
+    for (int i = 0; i < ret; i++) hash[i] = buf[buf_len - ret + i];
+
+    mbedtls_sha256_ret( hash, ret, socket->publicKeyHash, false );
+    socket->isPublicKeyHashInitDone = true;
+  }
+
+  info.GetReturnValue().Set(Nan::CopyBuffer((char *)socket->publicKeyHash, 32 ).ToLocalChecked());
+}
+
+NAN_GETTER(DtlsSocket::GetCertificateHash) {
+  DtlsSocket *socket = Nan::ObjectWrap::Unwrap<DtlsSocket>(info.This());
+
+  mbedtls_ssl_session *session = socket->ssl_context.session;
+  if (session == NULL ||
+      session->peer_cert == NULL) {
+    socket->isCertificateHashInitDone = false;
+    return;
+  }
+
+  if( socket->isCertificateHashInitDone == false )
+  {
+    mbedtls_sha256_ret( session->peer_cert->raw.p, session->peer_cert->raw.len, socket->certificateHash, false );
+    socket->isCertificateHashInitDone = true;
+  }
+
+  info.GetReturnValue().Set(Nan::CopyBuffer( (char *) socket->certificateHash, 32 ).ToLocalChecked());
 }
 
 NAN_GETTER(DtlsSocket::GetOutCounter) {
@@ -198,7 +253,9 @@ DtlsSocket::DtlsSocket(DtlsServer *server,
     error_cb(error_callback),
     handshake_cb(hs_callback),
     resume_sess_cb(resume_sess_callback),
-    session_wait(false) {
+    session_wait(false),
+    isPublicKeyHashInitDone( false ),
+    isCertificateHashInitDone( false ) {
   int ret;
 
   recv_len = 0;
