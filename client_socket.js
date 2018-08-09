@@ -65,7 +65,7 @@ class DtlsClientSocket extends stream.Duplex {
       options.debug);                     // Verbosity (integer)
 
     this.send = function(msg, offset, length, port, host, callback) {
-      this.mbedSocket.send(msg);
+      this.mbedSocket.send(msg);    // Not suppert callback
     }
 
     process.nextTick(() => {
