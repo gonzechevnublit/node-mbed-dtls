@@ -317,7 +317,7 @@ int DtlsClientSocket::receive_data(unsigned char *buf, int len) {
     // normal reading of unencrypted data
     memset(buf, 0, len);
     ret = mbedtls_ssl_read(&ssl_context, buf, len);
-    if (ret <= 0) {
+    if (ret <= 0 && ret != MBEDTLS_ERR_SSL_WANT_READ) {
       error(ret);
       return 0;
     }
